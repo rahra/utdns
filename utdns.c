@@ -134,7 +134,8 @@ static void log_udp_in(const dns_trx_t *dt)
 
    len = dns_name_to_buf(dt->data + 14, name, sizeof(name));
    qtype = ntohs(*((int16_t*) (dt->data + 14 + len)));
-   log_msg(LOG_INFO, "%d bytes incoming from %s, '%s'/%s", dt->data_len, buf, name, dns_rr_type(qtype));
+   log_msg(LOG_INFO, "%d bytes incoming from %s, id = 0x%04x, '%s'/%s", dt->data_len, buf, 
+         (int) ntohs(*((int16_t*) (dt->data + 2))), name, dns_rr_type(qtype));
 }
 
 
@@ -215,8 +216,9 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
       nfds = udp_sock;
 
       curr = time(NULL);
-      for (i = 0, len = 0; i < trx_cnt; i++)
+      for (i = 0, len = 1; i < trx_cnt; i++)
       {
+         // FIXME: an 'active' trx counter would improve execution speed
          if (trx[i].dst_sock <= 0)
             continue;
 
@@ -250,7 +252,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
 
          if (nfds < trx[i].dst_sock)
             nfds = trx[i].dst_sock;
-      }
+      } // for (i = 0, len = 0; i < trx_cnt; i++)
 
       log_msg(LOG_INFO, "select()ing on %d sockets", len);
       if ((nfds = select(nfds + 1, &rset, &wset, NULL, NULL)) == -1)
@@ -278,23 +280,27 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                return -1;
             }
 
-            log_udp_in(inp);
-
-            if ((inp->dst_sock = connect_to_dns_server(dns_addr, addr_len)) == -1)
+            if (inp->data_len >= 12)
             {
-               log_msg(LOG_ERR, "dropping request");
-               inp->data_len = 0;
+               log_udp_in(inp);
+               if ((inp->dst_sock = connect_to_dns_server(dns_addr, addr_len)) == -1)
+               {
+                  log_msg(LOG_ERR, "dropping request");
+                  inp->data_len = 0;
+               }
+               else
+               {
+                  inp->conn_state = CONN_STATE_SEND;
+                  // set length header for DNS/TCP
+                  *((uint16_t*) &inp->data[0]) = htons(inp->data_len);
+                  inp->data_len += 2;
+                  inp->time = time(NULL);
+               }
             }
             else
-            {
-               inp->conn_state = CONN_STATE_SEND;
-               // set length header for DNS/TCP
-               *((uint16_t*) &inp->data[0]) = htons(inp->data_len);
-               inp->data_len += 2;
-               inp->time = time(NULL);
-            }
+               log_msg(LOG_WARN, "ignoring short datagram (len = %d)", inp->data_len);
          }
-      }
+      } // if (FD_ISSET(udp_sock, &rset))
       
       // test for incoming data on tcp
       for (i = 0; nfds > 0 && i < trx_cnt; i++)
