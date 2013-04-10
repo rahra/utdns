@@ -282,6 +282,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
 
             if (inp->data_len >= 12)
             {
+               // FIXME: it should be checked if there is at least 1 question
                log_udp_in(inp);
                if ((inp->dst_sock = connect_to_dns_server(dns_addr, addr_len)) == -1)
                {
