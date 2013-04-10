@@ -21,6 +21,8 @@
  *  The responses are sent back again. Therefore, Utdns manages an internal
  *  transaction state table. Stale states are timed out after TIMEOUT secondes.
  *  The state table keeps MAX_TRX concurrent transactions.
+ *  In order to bind to the privileged port 53, Utdns has to started as root.
+ *  It will immediately drop privileges to NOBODY.
  *
  *
  * redirect all outgoing udp:53 traffic to local utdns:
