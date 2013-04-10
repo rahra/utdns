@@ -1,8 +1,29 @@
-/*!
+/* Copyright 2013 Bernhard R. Fischer, 2048R/5C5FFD47 <bf@abenteuerland.at>
+ *
+ * This file is part of Utdns.
+ *
+ * Utdns is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3 of the License.
+ *
+ * Utdns is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Utdns. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*! Utdns is a DNS protocol translator which turns UDP/DNS to TCP/DNS.
+ *  It receives DNS packets on UDP port 53 and forwards them to a DNS server
+ *  with TCP. The NS IP address has to be specified as command line argument.
+ *  The responses are sent back again. Therefore, Utdns manages an internal
+ *  transaction state table. Stale states are timed out after TIMEOUT secondes.
+ *  The state table keeps MAX_TRX concurrent transactions.
  *
  *
- *
- * redirect all outgoing udp:53 traffic to local itdns:
+ * redirect all outgoing udp:53 traffic to local utdns:
  * HOSTIP=10.203.40.207
  * iptables -A OUTPUT -t nat -p udp --dport 53 ! -d $HOSTIP -j DNAT --to-destination $HOSTIP
  */
