@@ -38,6 +38,70 @@ typedef struct dns_trx
 void log_msg(int, const char*, ...) __attribute__((format (printf, 2, 3)));
 
 
+static const char *dns_rr_type(int type)
+{
+   switch (type)
+   {
+      case 1:
+         return "A";
+
+      case 28:
+         return "AAAA";
+
+      case 5:
+         return "CNAME";
+
+      case 2:
+         return "NS";
+
+      case 12:
+         return "PTR";
+
+      case 6:
+         return "SOA";
+
+      case 15:
+         return "MX";
+
+      case 0xff:
+         return "ANY";
+
+      default:
+         return "(tbd)";
+   }
+}
+
+
+static int dns_label_to_buf(const char *src, char *buf, int len)
+{
+   int i, llen;
+
+   llen = *src++;
+   for (i = 0, len--; i < llen && len > 0; i++, src++, len--, buf++)
+      *buf = *src;
+   *buf = '\0';
+   return i;
+}
+
+
+static int dns_name_to_buf(const char *src, char *buf, int len)
+{
+   int llen, nlen;
+
+   for (nlen = 0;;src += llen + 1)
+   {
+      if (!(llen = dns_label_to_buf(src, buf, len)))
+         break;
+      buf += llen;
+      *buf = '.';
+      buf++;
+      len -= llen + 1;
+      nlen += llen + 1;
+   }
+   return nlen + 1;
+}
+
+
 static int init_udp_socket(int port)
 {
    struct sockaddr_in6 udp6_addr;
@@ -67,12 +131,15 @@ static int init_udp_socket(int port)
 
 static void log_udp_in(const dns_trx_t *dt)
 {
-   char buf[64];
+   char buf[64], name[256];
+   int len, qtype;
 
    if (getnameinfo((struct sockaddr*) &dt->addr, dt->addr_len, buf, sizeof(buf), NULL, 0, NI_NUMERICHOST))
       return;
 
-   log_msg(LOG_INFO, "%d bytes incoming from %s", dt->data_len, buf);
+   len = dns_name_to_buf(dt->data + 14, name, sizeof(name));
+   qtype = ntohs(*((int16_t*) (dt->data + 14 + len)));
+   log_msg(LOG_INFO, "%d bytes incoming from %s, '%s'/%s", dt->data_len, buf, name, dns_rr_type(qtype));
 }
 
 
@@ -182,10 +249,12 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          log_msg(LOG_ERR, "select() failed: %s", strerror(errno));
          return -1;
       }
+      log_msg(LOG_INFO, "%d sockets ready", nfds);
 
       // test for incoming packet on udp
       if (FD_ISSET(udp_sock, &rset))
       {
+         nfds--;
          if ((inp = get_free_trx(trx, trx_cnt)) == NULL)
          {
             log_msg(LOG_WARN, "no free trx in table, retrying immediately");
@@ -217,9 +286,8 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          }
       }
       
-      // FIXME: nfds is not counted
       // test for incoming data on tcp
-      for (i = 0; i < trx_cnt; i++)
+      for (i = 0; nfds > 0 && i < trx_cnt; i++)
       {
          if (trx[i].dst_sock <= 0)
             continue;
@@ -227,6 +295,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          // incomming data on tcp socket
          if (FD_ISSET(trx[i].dst_sock, &rset))
          {
+            nfds--;
             if ((trx[i].data_len = recv(trx[i].dst_sock, trx[i].data, sizeof(trx[i].data), 0)) == -1)
             {
                log_msg(LOG_ERR, "failed to recv() on tcp socket %d: %s", trx[i].dst_sock, strerror(errno));
@@ -263,6 +332,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          // tcp socket is ready for sending
          if (FD_ISSET(trx[i].dst_sock, &wset))
          {
+            nfds--;
             so_err_len = sizeof(so_err);
             if (getsockopt(trx[i].dst_sock, SOL_SOCKET, SO_ERROR, &so_err, &so_err_len) == -1)
             {
@@ -286,7 +356,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                   trx[i].dst_sock = 0;
                }
             }
-         }
+         } //if (FD_ISSET(trx[i].dst_sock, &wset))
       }
    }
 }
