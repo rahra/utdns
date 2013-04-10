@@ -65,9 +65,8 @@ static void log_udp_in(const dns_trx_t *dt)
 }
 
 
-static int connect_to_dns_server(void)
+static int connect_to_dns_server(const struct sockaddr *dns_addr, socklen_t addr_len)
 {
-   struct sockaddr_in in;
    int sock;
 
    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
@@ -76,13 +75,7 @@ static int connect_to_dns_server(void)
       return -1;
    }
 
-   // FIXME: this should not be hardcoded
-   memset(&in, 0, sizeof(in));
-   in.sin_family = AF_INET;
-   in.sin_port = htons(53);
-   in.sin_addr.s_addr = inet_addr("81.94.51.50");
-
-   if (connect(sock, (struct sockaddr*) &in, sizeof(in)) == -1)
+   if (connect(sock, dns_addr, addr_len) == -1)
    {
       (void) close(sock);
       return -1;
@@ -121,7 +114,7 @@ static dns_trx_t *get_free_trx(dns_trx_t *trx, int trx_cnt)
 }
 
 
-static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt)
+static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const struct sockaddr *dns_addr, socklen_t addr_len)
 {
    int i, nfds, len;
    dns_trx_t *inp;
@@ -169,7 +162,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt)
          log_udp_in(inp);
 
          // FIXME: error handling shall be improved
-         if ((inp->dst_sock = connect_to_dns_server()) == -1)
+         if ((inp->dst_sock = connect_to_dns_server(dns_addr, addr_len)) == -1)
          {
             fprintf(stderr, "failed to connect to dns\n");
             return -1;
@@ -226,8 +219,25 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt)
 
 int main(int argc, char **argv)
 {
+   struct sockaddr_in in;
    dns_trx_t *trx;
    int udp_sock;
+
+   if (argc < 2)
+   {
+      fprintf(stderr, "usage: %s <NS ip>\n", argv[0]);
+      exit(EXIT_FAILURE);
+   }
+
+   // FIXME: this should not be hardcoded
+   memset(&in, 0, sizeof(in));
+   in.sin_family = AF_INET;
+   in.sin_port = htons(53);
+   if (!inet_aton(argv[1], &in.sin_addr))
+   {
+      fprintf(stderr, "could not convert %s to in_addr\n", argv[1]);
+      exit(EXIT_FAILURE);
+   }
 
    if ((udp_sock = init_udp_socket(53)) == -1)
       perror("init_udp_socket"), exit(EXIT_FAILURE);
@@ -239,7 +249,7 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   dispatch_packets(udp_sock, trx, MAX_TRX);
+   dispatch_packets(udp_sock, trx, MAX_TRX, (struct sockaddr*) &in, sizeof(in));
    close(udp_sock);
 
    return 0;
