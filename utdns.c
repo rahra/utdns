@@ -328,6 +328,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                (void) close(trx[i].dst_sock);
                trx[i].dst_sock = 0;
 
+               // FIXME: this should be implemented asynchronous as well
                if ((len = sendto(udp_sock, &trx[i].data[2], trx[i].data_len, 0,
                      (struct sockaddr*) &trx[i].addr, trx[i].addr_len)) == -1)
                {
