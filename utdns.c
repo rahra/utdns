@@ -1,3 +1,11 @@
+/*!
+ *
+ *
+ *
+ * redirect all outgoing udp:53 traffic to local itdns:
+ * HOSTIP=10.203.40.207
+ * iptables -A OUTPUT -t nat -p udp --dport 53 ! -d $HOSTIP -j DNAT --to-destination $HOSTIP
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +38,7 @@ typedef struct dns_trx
    socklen_t addr_len;
    time_t time;
    int dst_sock;
+   int conn_state;
    int data_len;
    char data[FRAMESIZE + 2];
 } dns_trx_t;
@@ -38,36 +47,22 @@ typedef struct dns_trx
 void log_msg(int, const char*, ...) __attribute__((format (printf, 2, 3)));
 
 
+enum {CONN_STATE_NA, CONN_STATE_SEND, CONN_STATE_RECV};
+
+
 static const char *dns_rr_type(int type)
 {
    switch (type)
    {
-      case 1:
-         return "A";
-
-      case 28:
-         return "AAAA";
-
-      case 5:
-         return "CNAME";
-
-      case 2:
-         return "NS";
-
-      case 12:
-         return "PTR";
-
-      case 6:
-         return "SOA";
-
-      case 15:
-         return "MX";
-
-      case 0xff:
-         return "ANY";
-
-      default:
-         return "(tbd)";
+      case 1: return "A";
+      case 28: return "AAAA";
+      case 5: return "CNAME";
+      case 2: return "NS";
+      case 12: return "PTR";
+      case 6: return "SOA";
+      case 15: return "MX";
+      case 0xff: return "ANY";
+      default: return "(tbd)";
    }
 }
 
@@ -182,6 +177,9 @@ static int send_to_dns(dns_trx_t *trx)
       log_msg(LOG_ERR, "tcp send truncated: sent %d/%d", len, trx->data_len);
       memmove(trx->data, trx->data + len, trx->data_len - len);
    }
+   // if all data was sent bump state to RECV
+   else
+      trx->conn_state = CONN_STATE_RECV;
    trx->data_len -= len;
    return len;
 }
@@ -191,7 +189,10 @@ static dns_trx_t *get_free_trx(dns_trx_t *trx, int trx_cnt)
 {
    for (; trx_cnt; trx_cnt--, trx++)
       if (trx->dst_sock <= 0)
+      {
+         trx->conn_state = CONN_STATE_NA;
          return trx;
+      }
    return NULL;
 }
 
@@ -214,7 +215,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
       nfds = udp_sock;
 
       curr = time(NULL);
-      for (i = 0; i < trx_cnt; i++)
+      for (i = 0, len = 0; i < trx_cnt; i++)
       {
          if (trx[i].dst_sock <= 0)
             continue;
@@ -228,22 +229,30 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          }
 
          // data is waiting for sending to NS
-         if (trx[i].data_len)
+         if (trx[i].conn_state == CONN_STATE_SEND)
          {
             log_msg(LOG_INFO, "adding %d to wset", trx[i].dst_sock);
             FD_SET(trx[i].dst_sock, &wset);
+            len++;
          }
          // tcp is ready for reading from NS
-         else
+         else if (trx[i].conn_state == CONN_STATE_RECV)
          {
             log_msg(LOG_INFO, "adding %d to rset", trx[i].dst_sock);
             FD_SET(trx[i].dst_sock, &rset);
+            len++;
+         }
+         else
+         {
+            log_msg(LOG_EMERG, "this should not happen: conn_state = %d", trx[i].conn_state);
+            continue;
          }
 
          if (nfds < trx[i].dst_sock)
             nfds = trx[i].dst_sock;
       }
 
+      log_msg(LOG_INFO, "select()ing on %d sockets", len);
       if ((nfds = select(nfds + 1, &rset, &wset, NULL, NULL)) == -1)
       {
          log_msg(LOG_ERR, "select() failed: %s", strerror(errno));
@@ -278,6 +287,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             }
             else
             {
+               inp->conn_state = CONN_STATE_SEND;
                // set length header for DNS/TCP
                *((uint16_t*) &inp->data[0]) = htons(inp->data_len);
                inp->data_len += 2;
@@ -296,17 +306,18 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          if (FD_ISSET(trx[i].dst_sock, &rset))
          {
             nfds--;
-            if ((trx[i].data_len = recv(trx[i].dst_sock, trx[i].data, sizeof(trx[i].data), 0)) == -1)
+            if ((len = recv(trx[i].dst_sock, trx[i].data + trx[i].data_len, sizeof(trx[i].data) - trx[i].data_len, 0)) == -1)
             {
                log_msg(LOG_ERR, "failed to recv() on tcp socket %d: %s", trx[i].dst_sock, strerror(errno));
                return -1;
             }
 
-            log_msg(LOG_INFO, "received %d bytes on tcp socket %d", trx[i].data_len, trx[i].dst_sock);
+            trx[i].data_len += len;
+            log_msg(LOG_INFO, "received %d bytes on tcp socket %d", len, trx[i].dst_sock);
 
-            trx[i].data_len -= 2;
-            if (trx[i].data_len == ntohs(*((uint16_t*) &trx[i].data[0])))
+            if (trx[i].data_len - 2 == ntohs(*((uint16_t*) &trx[i].data[0])))
             {
+               trx[i].data_len -= 2;
                (void) close(trx[i].dst_sock);
                trx[i].dst_sock = 0;
 
@@ -324,7 +335,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             else
             {
                // FIXME: handle better
-               log_msg(LOG_ERR, "received truncated packet on tcp %d. expect %d got %d",
+               log_msg(LOG_NOTICE, "received truncated packet on tcp %d. expect %d got %d, waiting",
                      trx[i].dst_sock, trx[i].data_len, (int) ntohs(*((uint16_t*) &trx[i].data[0])));
             }
          } // if (FD_ISSET(trx[i].dst_sock, &rset))
