@@ -176,23 +176,38 @@ static int dns_name_to_buf(const char *src, char *buf, int len)
  * @return Returns a valid file descriptor of the socket or -1 in case of
  * error.
  */
-static int init_udp_socket(int port)
+static int init_udp_socket(int family, int port)
 {
-   struct sockaddr_in6 udp6_addr;
-   int sock;
+   struct sockaddr_storage sock_addr;
+   int sock, len;
 
-   memset(&udp6_addr, 0, sizeof(udp6_addr));
-   udp6_addr.sin6_family = AF_INET6;
-   udp6_addr.sin6_port = htons(port);
-   //udp6_addr.sin6_addr = in6addr_loopback;
+   memset(&sock_addr, 0, sizeof(sock_addr));
+   sock_addr.ss_family = family;
 
-   if ((sock = socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, 0)) == -1)
+   switch (family)
+   {
+      case AF_INET6:
+        ((struct sockaddr_in6*) &sock_addr)->sin6_port = htons(port);
+        len = sizeof(struct sockaddr_in6);
+         break;
+
+      case AF_INET:
+        ((struct sockaddr_in*) &sock_addr)->sin_port = htons(port);
+        len = sizeof(struct sockaddr_in);
+         break;
+
+      default:
+         log_msg(LOG_ERR, "ill address family 0x%04x", family);
+         return -1;
+   }
+
+   if ((sock = socket(family, SOCK_DGRAM | SOCK_NONBLOCK, 0)) == -1)
    {
       log_msg(LOG_ERR, "creating udp socket failed: %s", strerror(errno));
       return -1;
    }
 
-   if (bind(sock, (struct sockaddr*) &udp6_addr, sizeof(udp6_addr)) == -1)
+   if (bind(sock, (struct sockaddr*) &sock_addr, len) == -1)
    {
       log_msg(LOG_ERR, "binding udp socket failed: %s", strerror(errno));
       (void) close(sock);
@@ -574,6 +589,7 @@ static void usage(const char *argv0)
    printf(
          "UDP/DNS-to-TCP/DNS-Translator V1.0, (c) 2013, Bernhard R. Fischer, 2048R/5C5FFD47 <bf@abenteuerland.at>.\n"
          "Usage: %s [OPTIONS] <NS ip>\n"
+         "   -4 .......... Bind to IPv4 only instead of IP + IPv6.\n"
          "   -b .......... Background process and log to syslog.\n"
          "   -d .......... Set log level to LOG_DEBUG.\n"
          "   -p <port> ... Set incoming UDP port number.\n",
@@ -585,7 +601,7 @@ int main(int argc, char **argv)
 {
    struct sockaddr_in in;
    dns_trx_t *trx;
-   int udp_sock, udp_port = 53;
+   int udp_sock, udp_port = 53, family = AF_INET6;
    int c, bground = 0, debuglevel = LOG_INFO;
 
 #ifdef TEST_UTDNS_FUNC
@@ -596,10 +612,14 @@ int main(int argc, char **argv)
    (void) init_log("stderr", debuglevel);
 #endif
 
-   while ((c = getopt(argc, argv, "bdhp:")) != -1)
+   while ((c = getopt(argc, argv, "4bdhp:")) != -1)
    {
       switch (c)
       {
+         case '4':
+            family = AF_INET;
+            break;
+
          case 'b':
             bground++;
             break;
@@ -634,7 +654,7 @@ int main(int argc, char **argv)
       exit(EXIT_FAILURE);
    }
 
-   if ((udp_sock = init_udp_socket(udp_port)) == -1)
+   if ((udp_sock = init_udp_socket(family, udp_port)) == -1)
       perror("init_udp_socket"), exit(EXIT_FAILURE);
 
    drop_privileges();
