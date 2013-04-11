@@ -574,8 +574,9 @@ static void usage(const char *argv0)
    printf(
          "UDP/DNS-to-TCP/DNS-Translator V1.0, (c) 2013, Bernhard R. Fischer, 2048R/5C5FFD47 <bf@abenteuerland.at>.\n"
          "Usage: %s [OPTIONS] <NS ip>\n"
-         "   -b ...... Background process and log to syslog.\n"
-         "   -d ...... Set log level to LOG_DEBUG.\n",
+         "   -b .......... Background process and log to syslog.\n"
+         "   -d .......... Set log level to LOG_DEBUG.\n"
+         "   -p <port> ... Set incoming UDP port number.\n",
          argv0);
 }
 
@@ -584,7 +585,7 @@ int main(int argc, char **argv)
 {
    struct sockaddr_in in;
    dns_trx_t *trx;
-   int udp_sock;
+   int udp_sock, udp_port = 53;
    int c, bground = 0, debuglevel = LOG_INFO;
 
 #ifdef TEST_UTDNS_FUNC
@@ -595,7 +596,7 @@ int main(int argc, char **argv)
    (void) init_log("stderr", debuglevel);
 #endif
 
-   while ((c = getopt(argc, argv, "bdh")) != -1)
+   while ((c = getopt(argc, argv, "bdhp:")) != -1)
    {
       switch (c)
       {
@@ -610,6 +611,10 @@ int main(int argc, char **argv)
          case 'h':
             usage(argv[0]);
             exit(EXIT_SUCCESS);
+
+         case 'p':
+            udp_port = atoi(optarg);
+            break;
       }
    }
 
@@ -629,7 +634,7 @@ int main(int argc, char **argv)
       exit(EXIT_FAILURE);
    }
 
-   if ((udp_sock = init_udp_socket(53)) == -1)
+   if ((udp_sock = init_udp_socket(udp_port)) == -1)
       perror("init_udp_socket"), exit(EXIT_FAILURE);
 
    drop_privileges();
