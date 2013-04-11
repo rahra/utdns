@@ -64,7 +64,9 @@ FILE *init_log(const char *s, int level)
 {
    level_ = level;
 
-   if (s == NULL || !strcmp(s, "stderr"))
+   if (s == NULL)
+      log_ = NULL;
+   else if (!strcmp(s, "stderr"))
       log_ = stderr;
    else if ((log_ = fopen(s, "a")) == NULL)
       fprintf(stderr, "*** could not open logfile %s: %s. Logging to syslog.\n", s, strerror(errno));
