@@ -57,13 +57,13 @@
 
 typedef struct dns_trx
 {
-   struct sockaddr_storage addr;
+   struct sockaddr_storage addr;    // keep socket address of original UDP sender
    socklen_t addr_len;
-   time_t time;
-   int dst_sock;
-   int conn_state;
-   int data_len;
-   char data[FRAMESIZE + 2];
+   time_t time;                     // incoming timestamp
+   int dst_sock;                    // socket fd of outgoing TCP connection
+   int conn_state;                  // state of transaction
+   int data_len;                    // data length to send
+   char data[FRAMESIZE + 2];        // data
 } dns_trx_t;
 
 
@@ -73,6 +73,10 @@ void log_msg(int, const char*, ...) __attribute__((format (printf, 2, 3)));
 enum {CONN_STATE_NA, CONN_STATE_SEND, CONN_STATE_RECV};
 
 
+/*! This function decodes the RR type and returns a constant string pointer.
+ *  @param type Numeric RR type.
+ *  @return Pointer to constant string.
+ */
 static const char *dns_rr_type(int type)
 {
    switch (type)
@@ -90,18 +94,62 @@ static const char *dns_rr_type(int type)
 }
 
 
+/*! Dns_label_to_buf() converts one label of a domain name to a \0-terminated C
+ *  character string. Compressed labels (0xc0) are not decompressed but binary
+ *  labels (0x40) are decoded. Thus the character string buf may contain \0
+ *  bytes. buf will always be \0-terminated.
+ *  @param src Pointer to DNS label.
+ *  @param buf Pointer to destination buffer.
+ *  @param len Total length of buf.
+ *  @return Number of bytes copied to buf excluding the terminating \0. Thus,
+ *  the total number of bytes copied to buf is always less than len.
+ */
 static int dns_label_to_buf(const char *src, char *buf, int len)
 {
-   int i, llen;
+   int i = 0, llen;
 
-   llen = *src++;
-   for (i = 0, len--; i < llen && len > 0; i++, src++, len--, buf++)
-      *buf = *src;
+   len--;
+   llen = *src++ & 0xff;
+   // uncompressed label
+   if (!(llen & 0xc0))
+   {
+      for (; i < llen && len > 0; i++, src++, len--, buf++)
+         *buf = *src;
+   }
+   // compressed label
+   else if ((llen & 0xc0) == 0xc0)
+   {
+      if (len > 0)
+      {
+         *buf++ = '_';
+         i++;
+         len--;
+      }
+   }
+   // binary label, EDNS0
+   else if ((llen & 0xc0) == 0x40)
+   {
+      llen = *src & 0xff;
+      //*buf++ = *src++;
+      if (!llen) len = 256;
+      llen--;
+      llen >>= 3;
+      llen++;
+      for (; i <= llen && len > 0; i++, src++, len--, buf++)
+         *buf = *src;
+   }
    *buf = '\0';
    return i;
 }
 
 
+/*! Decodes a domain name consisting of several DNS labels.
+ *  @param src Pointer to domain name.
+ *  @param buf Pointer to destination buffer.
+ *  @param len Total length of buf.
+ *  @return The total number of bytes within buf including the terminating \0
+ *  which is also the total number of bytes decoded within src.
+ */
 static int dns_name_to_buf(const char *src, char *buf, int len)
 {
    int llen, nlen;
@@ -120,6 +168,12 @@ static int dns_name_to_buf(const char *src, char *buf, int len)
 }
 
 
+/*! This function opens a UDP socket on all addresses (0.0.0.0 and ::) of the
+ * host at the given port number.
+ * @param port Port number for the UDP socket.
+ * @return Returns a valid file descriptor of the socket or -1 in case of
+ * error.
+ */
 static int init_udp_socket(int port)
 {
    struct sockaddr_in6 udp6_addr;
@@ -147,6 +201,10 @@ static int init_udp_socket(int port)
 }
 
 
+/*! Simple logging function which outputs some information about a (newly
+ * created) DNS transaction.
+ * @param dt Pointer to the transaction.
+ */
 static void log_udp_in(const dns_trx_t *dt)
 {
    char buf[64], name[256];
@@ -162,6 +220,12 @@ static void log_udp_in(const dns_trx_t *dt)
 }
 
 
+/*! Asynchronously (non-blocking) open a TCP session to a given destination.
+ *  @param dns_addr Destinationa address.
+ *  @param addr_len Length of dns_addr structure.
+ *  @return Returns a valid file descriptor of the socket being in connection
+ *  setup or -1 in case of error.
+ */
 static int connect_to_dns_server(const struct sockaddr *dns_addr, socklen_t addr_len)
 {
    int sock;
@@ -185,6 +249,13 @@ static int connect_to_dns_server(const struct sockaddr *dns_addr, socklen_t addr
 }
 
 
+/*! Send data to remote NS on an open TCP session.
+ *  @param trx Pointer to DNS transaction structure containing the data.
+ *  @return Returns the number of bytes sent. The function can be called
+ *  several times until the whole data buffer is empty. If all bytes could be
+ *  sent the connection state of the transaction (trx->conn_state) is changed
+ *  to CONN_STATE_RECV.
+ */
 static int send_to_dns(dns_trx_t *trx)
 {
    int len;
@@ -209,6 +280,15 @@ static int send_to_dns(dns_trx_t *trx)
 }
 
 
+/*! Get_free_trx() looks up and returns a pointer to a currently unused
+ *  transaction structure within the table of transactions.
+ *  @param trx Pointer to the beginning of the transaction table.
+ *  @param trx_cnt Number of entries in the table.
+ *  @return Returns a valid pointer or NULL of no entry is available. The
+ *  connection state of an empty transaction is initialized to CONN_STATE_NA
+ *  and the destination (TCP) file descriptor contains a value of less than or
+ *  equal to 0.
+ */
 static dns_trx_t *get_free_trx(dns_trx_t *trx, int trx_cnt)
 {
    for (; trx_cnt; trx_cnt--, trx++)
@@ -221,15 +301,27 @@ static dns_trx_t *get_free_trx(dns_trx_t *trx, int trx_cnt)
 }
 
 
+/*! This is the main routing for dispatching packets between UDP clients and
+ * the TCP name server. It keeps track on all transactions within the
+ * transaction table. Stale transactions will be removed not before the timeout
+ * (TIMEOUT) elapses.
+ * @param udp_sock File descriptor of UDP socket used for receiving packets of
+ * the clients.
+ * @param trx Pointer to the beginning of the transaction table.
+ * @param trx_cnt Number of maximum entries in trx.
+ * @param dns_addr Pointer to the socket address of the remote NS.
+ * @param addr_len Length of the dns_addr structure.
+ * @return -1 in case of error.
+ */
 static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const struct sockaddr *dns_addr, socklen_t addr_len)
 {
-   int i, nfds, len, so_err;
+   int i, nfds, len, so_err, running = 1;
    socklen_t so_err_len;
    fd_set rset, wset;
    dns_trx_t *inp;
    time_t curr;
 
-   for (;;)
+   while (running)
    {
       FD_ZERO(&rset);
       FD_ZERO(&wset);
@@ -401,7 +493,23 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          } //if (FD_ISSET(trx[i].dst_sock, &wset))
       }
    }
+   return 0;
 }
+
+
+
+//#define TEST_UTDNS_FUNC
+#ifdef TEST_UTDNS_FUNC
+void test_utdns_func(void)
+{
+   char testar[] = {0x41, 24, 'a', 'b', 'c', 0xc0, 'A', 3, 'd', 'e', 'f', 0};
+   char buf[256];
+
+   dns_name_to_buf(testar, buf, sizeof(buf));
+   printf("%s\n", buf);
+   exit(0);
+}
+#endif
 
 
 int main(int argc, char **argv)
@@ -409,6 +517,10 @@ int main(int argc, char **argv)
    struct sockaddr_in in;
    dns_trx_t *trx;
    int udp_sock;
+
+#ifdef TEST_UTDNS_FUNC
+   test_utdns_func();
+#endif
 
    if (argc < 2)
    {
