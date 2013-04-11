@@ -40,6 +40,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>     // inet_addr()
 
@@ -515,23 +516,106 @@ void test_utdns_func(void)
 #endif
 
 
+static void background(void)
+{
+   pid_t pid, ppid;
+
+   log_msg(LOG_DEBUG, "backgrounding");
+
+   ppid = getpid();
+   pid = fork();
+   switch(pid)
+   {
+      case -1:
+         log_msg(LOG_ERR, "fork failed: %s. Staying in foreground", strerror(errno));
+         return;
+
+      case 0:
+         log_msg(LOG_INFO, "process backgrounded by parent %d, new pid = %d", ppid, getpid());
+         (void) umask(0);
+         if (setsid() == -1)
+            log_msg(LOG_ERR, "could not set process group ID: \"%s\"", strerror(errno));
+         if (chdir("/") == -1)
+            log_msg(LOG_ERR, "could not change directory to /: \"%s\"", strerror(errno));
+         // redirect standard files to /dev/null
+         if (!freopen( "/dev/null", "r", stdin))
+            log_msg(LOG_ERR, "could not reconnect stdin to /dev/null: \"%s\"", strerror(errno));
+         if (!freopen( "/dev/null", "w", stdout))
+            log_msg(LOG_ERR, "could not reconnect stdout to /dev/null: \"%s\"", strerror(errno));
+         if (!freopen( "/dev/null", "w", stderr))
+            log_msg(LOG_ERR, "could not reconnect stderr to /dev/null: \"%s\"", strerror(errno));
+         return;
+
+      default:
+         log_msg(LOG_DEBUG, "parent %d exits, background pid = %d", ppid, pid);
+         exit(EXIT_SUCCESS);
+   }
+}
+
+
+static void drop_privileges(void)
+{
+   if (getuid())
+      return;
+
+   // drop priviledges if root
+   if (setgid(NOBODY) == -1)
+      log_msg(LOG_ERR, "setgid() failed: %s", strerror(errno)),
+         exit(EXIT_FAILURE);
+   if (setuid(NOBODY) == -1)
+      log_msg(LOG_ERR, "setuid() failed: %s", strerror(errno)),
+         exit(EXIT_FAILURE);
+   log_msg(LOG_NOTICE, "privileges dropped");
+}
+
+
+static void usage(const char *argv0)
+{
+   printf(
+         "UDP/DNS-to-TCP/DNS-Translator V1.0, (c) 2013, Bernhard R. Fischer, 2048R/5C5FFD47 <bf@abenteuerland.at>.\n"
+         "Usage: %s [OPTIONS] <NS ip>\n"
+         "   -b ...... Background process and log to syslog.\n"
+         "   -d ...... Set log level to LOG_DEBUG.\n",
+         argv0);
+}
+
+
 int main(int argc, char **argv)
 {
    struct sockaddr_in in;
    dns_trx_t *trx;
    int udp_sock;
+   int c, bground = 0, debuglevel = LOG_INFO;
 
 #ifdef TEST_UTDNS_FUNC
    test_utdns_func();
 #endif
 
 #ifdef DEBUG
-   (void) init_log(NULL, LOG_DEBUG);
+   (void) init_log("stderr", debuglevel);
 #endif
 
-   if (argc < 2)
+   while ((c = getopt(argc, argv, "bdh")) != -1)
    {
-      fprintf(stderr, "usage: %s <NS ip>\n", argv[0]);
+      switch (c)
+      {
+         case 'b':
+            bground++;
+            break;
+
+         case 'd':
+            debuglevel = LOG_DEBUG;
+            break;
+
+         case 'h':
+            usage(argv[0]);
+            exit(EXIT_SUCCESS);
+      }
+   }
+
+   if (argv[optind] == NULL)
+   {
+      usage(argv[0]);
       exit(EXIT_FAILURE);
    }
 
@@ -539,26 +623,24 @@ int main(int argc, char **argv)
    memset(&in, 0, sizeof(in));
    in.sin_family = AF_INET;
    in.sin_port = htons(53);
-   if (!inet_aton(argv[1], &in.sin_addr))
+   if (!inet_aton(argv[optind], &in.sin_addr))
    {
-      fprintf(stderr, "could not convert %s to in_addr\n", argv[1]);
+      log_msg(LOG_ERR, "could not convert %s to in_addr\n", argv[optind]);
       exit(EXIT_FAILURE);
    }
 
    if ((udp_sock = init_udp_socket(53)) == -1)
       perror("init_udp_socket"), exit(EXIT_FAILURE);
 
-   // drop priviledges if root
-   if (!getuid())
+   drop_privileges();
+
+   if (bground)
    {
-      if (setgid(NOBODY) == -1)
-         log_msg(LOG_ERR, "setgid() failed: %s", strerror(errno)),
-            exit(EXIT_FAILURE);
-      if (setuid(NOBODY) == -1)
-         log_msg(LOG_ERR, "setuid() failed: %s", strerror(errno)),
-            exit(EXIT_FAILURE);
-      log_msg(LOG_NOTICE, "priviledges dropped");
+      (void) init_log(NULL, debuglevel);
+      background();
    }
+   else
+      (void) init_log("stderr", debuglevel);
 
    if ((trx = calloc(MAX_TRX, sizeof(*trx))) == NULL)
    {
