@@ -68,6 +68,7 @@ typedef struct dns_trx
 
 
 void log_msg(int, const char*, ...) __attribute__((format (printf, 2, 3)));
+FILE *init_log(const char*, int);
 
 
 enum {CONN_STATE_NA, CONN_STATE_SEND, CONN_STATE_RECV};
@@ -244,7 +245,7 @@ static int connect_to_dns_server(const struct sockaddr *dns_addr, socklen_t addr
       return -1;
    }
 
-   log_msg(LOG_INFO, "connecting %d to NS", sock);
+   log_msg(LOG_DEBUG, "connecting %d to NS", sock);
    return sock;
 }
 
@@ -265,11 +266,12 @@ static int send_to_dns(dns_trx_t *trx)
       log_msg(LOG_ERR, "sending data on %d to NS failed: %s", trx->dst_sock, strerror(errno));
       return -1;
    }
-   log_msg(LOG_INFO, "sending data to NS on %d", trx->dst_sock);
+   log_msg(LOG_DEBUG, "sending data to NS on %d", trx->dst_sock);
    
    if (len < trx->data_len)
    {
-      log_msg(LOG_ERR, "tcp send truncated: sent %d/%d", len, trx->data_len);
+      // FIXME: LOG_WARN?
+      log_msg(LOG_WARN, "tcp send truncated: sent %d/%d", len, trx->data_len);
       memmove(trx->data, trx->data + len, trx->data_len - len);
    }
    // if all data was sent bump state to RECV
@@ -348,14 +350,14 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          // data is waiting for sending to NS
          if (trx[i].conn_state == CONN_STATE_SEND)
          {
-            log_msg(LOG_INFO, "adding %d to wset", trx[i].dst_sock);
+            log_msg(LOG_DEBUG, "adding %d to wset", trx[i].dst_sock);
             FD_SET(trx[i].dst_sock, &wset);
             len++;
          }
          // tcp is ready for reading from NS
          else if (trx[i].conn_state == CONN_STATE_RECV)
          {
-            log_msg(LOG_INFO, "adding %d to rset", trx[i].dst_sock);
+            log_msg(LOG_DEBUG, "adding %d to rset", trx[i].dst_sock);
             FD_SET(trx[i].dst_sock, &rset);
             len++;
          }
@@ -369,13 +371,13 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             nfds = trx[i].dst_sock;
       } // for (i = 0, len = 0; i < trx_cnt; i++)
 
-      log_msg(LOG_INFO, "select()ing on %d sockets", len);
+      log_msg(LOG_DEBUG, "select()ing on %d sockets", len);
       if ((nfds = select(nfds + 1, &rset, &wset, NULL, NULL)) == -1)
       {
          log_msg(LOG_ERR, "select() failed: %s", strerror(errno));
          return -1;
       }
-      log_msg(LOG_INFO, "%d sockets ready", nfds);
+      log_msg(LOG_DEBUG, "%d sockets ready", nfds);
 
       // test for incoming packet on udp
       if (FD_ISSET(udp_sock, &rset))
@@ -401,7 +403,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                log_udp_in(inp);
                if ((inp->dst_sock = connect_to_dns_server(dns_addr, addr_len)) == -1)
                {
-                  log_msg(LOG_ERR, "dropping request");
+                  log_msg(LOG_WARN, "dropping request");
                   inp->data_len = 0;
                }
                else
@@ -435,7 +437,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             }
 
             trx[i].data_len += len;
-            log_msg(LOG_INFO, "received %d bytes on tcp socket %d", len, trx[i].dst_sock);
+            log_msg(LOG_DEBUG, "received %d bytes on tcp socket %d", len, trx[i].dst_sock);
 
             if (trx[i].data_len - 2 == ntohs(*((uint16_t*) &trx[i].data[0])))
             {
@@ -451,7 +453,8 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                }
                else
                {
-                  log_msg(LOG_INFO, "sent %d/%d bytes on udp", len, trx[i].data_len);
+                  log_msg(LOG_INFO, "replied %d/%d bytes on udp, id = 0x%04x", len, trx[i].data_len,
+                        (int) ntohs(*((int16_t*) (trx[i].data + 2))));
                }
                trx[i].data_len = 0;
             }
@@ -482,7 +485,7 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             }
             else
             {
-               log_msg(LOG_INFO, "socket %d connected", trx[i].dst_sock);
+               log_msg(LOG_DEBUG, "socket %d connected", trx[i].dst_sock);
                if (send_to_dns(&trx[i]) == -1)
                {
                   log_msg(LOG_ERR, "dropping data and closing %d", trx[i].dst_sock);
@@ -520,6 +523,10 @@ int main(int argc, char **argv)
 
 #ifdef TEST_UTDNS_FUNC
    test_utdns_func();
+#endif
+
+#ifdef DEBUG
+   (void) init_log(NULL, LOG_DEBUG);
 #endif
 
    if (argc < 2)
@@ -561,6 +568,7 @@ int main(int argc, char **argv)
    }
 
    dispatch_packets(udp_sock, trx, MAX_TRX, (struct sockaddr*) &in, sizeof(in));
+   free(trx);
    close(udp_sock);
 
    return 0;
