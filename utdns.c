@@ -448,8 +448,10 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
             nfds--;
             if ((len = recv(trx[i].dst_sock, trx[i].data + trx[i].data_len, sizeof(trx[i].data) - trx[i].data_len, 0)) == -1)
             {
-               log_msg(LOG_ERR, "failed to recv() on tcp socket %d: %s", trx[i].dst_sock, strerror(errno));
-               return -1;
+               log_msg(LOG_ERR, "failed to recv() on tcp socket %d: %s. Dropping", trx[i].dst_sock, strerror(errno));
+               (void) close(trx[i].dst_sock);
+               trx[i].dst_sock = 0;
+               continue;
             }
 
             trx[i].data_len += len;
