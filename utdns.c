@@ -25,9 +25,11 @@
  *  It will immediately drop privileges to NOBODY.
  *
  *
- * redirect all outgoing udp:53 traffic to local utdns:
- * HOSTIP=10.203.40.207
- * iptables -A OUTPUT -t nat -p udp --dport 53 ! -d $HOSTIP -j DNAT --to-destination $HOSTIP
+ * redirect all outgoing udp:53 traffic to local utdns running on port 5300:
+ * iptables -A OUTPUT -t nat -p udp --dport 53 ! -o lo -j DNAT --to-destination 127.0.0.1:5300
+ * iptables -A POSTROUTING -t nat -p udp --dport 5300  -j SNAT --to-source 127.0.0.1
+ * redirect all incoming traffic
+ * iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
  */
 #include <stdio.h>
 #include <stdlib.h>
