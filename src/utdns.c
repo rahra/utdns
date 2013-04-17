@@ -39,6 +39,7 @@
 #include <netdb.h>
 #include <syslog.h>
 #include <time.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -56,6 +57,14 @@
 #define LOG_WARN LOG_WARNING
 #define FRAMESIZE 65536
 #define NOBODY 65534
+
+#ifndef SOCK_NONBLOCK
+#define SOCK_NONBLOCK 0
+#define USE_FCNTL
+#define SET_NONBLOCK(x) set_nonblock(x)
+#else
+#define SET_NONBLOCK(x)
+#endif
 
 
 typedef struct dns_trx
@@ -172,6 +181,19 @@ static int dns_name_to_buf(const char *src, char *buf, int len)
 }
 
 
+#ifdef USE_FCNTL
+static int set_nonblock(int s)
+{
+   if (fcntl(s, F_SETFL, O_NONBLOCK) == -1)
+   {
+      log_msg(LOG_ERR, "fcntl() failed: %s", strerror(errno));
+      return -1;
+   }
+   return 0;
+}
+#endif
+
+
 /*! This function opens a UDP socket on all addresses (0.0.0.0 and ::) of the
  * host at the given port number.
  * @param port Port number for the UDP socket.
@@ -208,6 +230,8 @@ static int init_udp_socket(int family, int port)
       log_msg(LOG_ERR, "creating udp socket failed: %s", strerror(errno));
       return -1;
    }
+
+   SET_NONBLOCK(sock);
 
    if (bind(sock, (struct sockaddr*) &sock_addr, len) == -1)
    {
@@ -254,6 +278,8 @@ static int connect_to_dns_server(const struct sockaddr *dns_addr, socklen_t addr
       log_msg(LOG_ERR, "creating tcp socket for NS connection failed: %s", strerror(errno));
       return -1;
    }
+
+   SET_NONBLOCK(sock);
 
    if (connect(sock, dns_addr, addr_len) == -1 &&
          errno != EINPROGRESS)
