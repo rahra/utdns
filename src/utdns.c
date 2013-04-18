@@ -107,6 +107,21 @@ static const char *dns_rr_type(int type)
 }
 
 
+static const char *dns_rcode(int code)
+{
+   switch (code)
+   {
+      case 0: return "NOERROR";
+      case 1: return "FORMERR";
+      case 2: return "SERVFAIL";
+      case 3: return "NXDOMAIN";
+      case 4: return "NOTIMP";
+      case 5: return "REFUSED";
+      default: return "";
+   }
+}
+
+
 /*! Dns_label_to_buf() converts one label of a domain name to a \0-terminated C
  *  character string. Compressed labels (0xc0) are not decompressed but binary
  *  labels (0x40) are decoded. Thus the character string buf may contain \0
@@ -499,8 +514,8 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
                }
                else
                {
-                  log_msg(LOG_INFO, "replied %d/%d bytes on udp, id = 0x%04x", len, trx[i].data_len,
-                        (int) ntohs(*((int16_t*) (trx[i].data + 2))));
+                  log_msg(LOG_INFO, "replied %d/%d bytes on udp, id = 0x%04x, RCODE = %s", len, trx[i].data_len,
+                        (int) ntohs(*((int16_t*) (trx[i].data + 2))), dns_rcode(trx[i].data[5] & 15));
                }
                trx[i].data_len = 0;
             }
