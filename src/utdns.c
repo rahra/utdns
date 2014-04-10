@@ -73,6 +73,7 @@ typedef struct dns_trx
    socklen_t addr_len;
    time_t time;                     // incoming timestamp
    int dst_sock;                    // socket fd of outgoing TCP connection
+   int in_sock;                     // socket fd for incoming TCP connection
    int conn_state;                  // state of transaction
    int data_len;                    // data length to send
    char data[FRAMESIZE + 2];        // data
@@ -215,7 +216,7 @@ static int set_nonblock(int s)
  * @return Returns a valid file descriptor of the socket or -1 in case of
  * error.
  */
-static int init_udp_socket(int family, int port)
+static int init_srv_socket(int family, int type, int port)
 {
    struct sockaddr_storage sock_addr;
    int sock, len;
@@ -240,7 +241,7 @@ static int init_udp_socket(int family, int port)
          return -1;
    }
 
-   if ((sock = socket(family, SOCK_DGRAM | SOCK_NONBLOCK, 0)) == -1)
+   if ((sock = socket(family, type | SOCK_NONBLOCK, 0)) == -1)
    {
       log_msg(LOG_ERR, "creating udp socket failed: %s", strerror(errno));
       return -1;
@@ -256,6 +257,30 @@ static int init_udp_socket(int family, int port)
    }
 
    return sock;
+}
+
+
+static int init_tcp_socket(int family, int port)
+{
+   int s;
+   
+   if ((s = init_srv_socket(family, SOCK_STREAM, port)) == -1)
+      return -1;
+
+   if (listen(s, 10) == -1)
+   {
+      log_msg(LOG_ERR, "failed to listen(%d): %s", s, strerror(errno));
+      close(s);
+      return -1;
+   }
+
+   return s;
+}
+
+
+static int init_udp_socket(int family, int port)
+{
+   return init_srv_socket(family, SOCK_DGRAM, port);
 }
 
 
@@ -374,7 +399,7 @@ static dns_trx_t *get_free_trx(dns_trx_t *trx, int trx_cnt)
  * @param addr_len Length of the dns_addr structure.
  * @return -1 in case of error.
  */
-static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const struct sockaddr *dns_addr, socklen_t addr_len)
+static int dispatch_packets(int udp_sock, int tcp_sock, dns_trx_t *trx, int trx_cnt, const struct sockaddr *dns_addr, socklen_t addr_len)
 {
    int i, nfds, len, so_err, running = 1;
    socklen_t so_err_len;
@@ -389,7 +414,8 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
 
       // wait on udp socket for input packets
       FD_SET(udp_sock, &rset);
-      nfds = udp_sock;
+      FD_SET(tcp_sock, &rset);
+      nfds = udp_sock > tcp_sock ? udp_sock : tcp_sock;
 
       curr = time(NULL);
       for (i = 0, len = 1; i < trx_cnt; i++)
@@ -479,6 +505,24 @@ static int dispatch_packets(int udp_sock, dns_trx_t *trx, int trx_cnt, const str
          }
       } // if (FD_ISSET(udp_sock, &rset))
       
+      // check if new incoming tcp session
+      if (FD_ISSET(tcp_sock, &rset))
+      {
+         nfds--;
+         if ((inp = get_free_trx(trx, trx_cnt)) == NULL)
+         {
+            log_msg(LOG_WARN, "no free trx in table, retrying immediately");
+         }
+         else
+         {
+            if ((inp->in_sock = accept(tcp_sock, (struct sockaddr*) &inp->addr, &inp->addr_len)) == -1)
+               log_msg(LOG_ERR, "accept(%d) failed: %s", tcp_sock, strerror(errno));
+
+            log_msg(LOG_INFO, "accepted new session on %d", inp->in_sock);
+            // FIXME: incoming tcp not finished!
+         }
+      } // if (FD_ISSET(tcp_sock, &rset))
+
       // test for incoming data on tcp
       for (i = 0; nfds > 0 && i < trx_cnt; i++)
       {
@@ -646,7 +690,7 @@ int main(int argc, char **argv)
 {
    struct sockaddr_in in;
    dns_trx_t *trx;
-   int udp_sock, udp_port = 53, family = AF_INET6;
+   int udp_sock, tcp_sock, udp_port = 53, family = AF_INET6;
    int c, bground = 0, debuglevel = LOG_INFO;
 
 #ifdef TEST_UTDNS_FUNC
@@ -702,6 +746,9 @@ int main(int argc, char **argv)
    if ((udp_sock = init_udp_socket(family, udp_port)) == -1)
       perror("init_udp_socket"), exit(EXIT_FAILURE);
 
+   if ((tcp_sock = init_tcp_socket(family, udp_port)) == -1)
+      perror("init_tcp_socket"), exit(EXIT_FAILURE);
+
    drop_privileges();
 
    if (bground)
@@ -719,8 +766,9 @@ int main(int argc, char **argv)
       return -1;
    }
 
-   dispatch_packets(udp_sock, trx, MAX_TRX, (struct sockaddr*) &in, sizeof(in));
+   dispatch_packets(udp_sock, tcp_sock, trx, MAX_TRX, (struct sockaddr*) &in, sizeof(in));
    free(trx);
+   close(tcp_sock);
    close(udp_sock);
 
    return 0;
