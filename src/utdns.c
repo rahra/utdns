@@ -47,6 +47,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>     // inet_addr()
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#else
+#define PACKAGE_VERSION ""
+#endif
 
 // maximum number of concurrent transactions
 #define MAX_TRX 512
@@ -676,14 +681,14 @@ static void drop_privileges(void)
 static void usage(const char *argv0)
 {
    printf(
-         "UDP/DNS-to-TCP/DNS-Translator V1.0, (c) 2013, Bernhard R. Fischer, 2048R/5C5FFD47 <bf@abenteuerland.at>.\n"
+         "UDP/DNS-to-TCP/DNS-Translator %s, Bernhard R. Fischer, 4096R/8E24F29D <bf@abenteuerland.at>.\n"
          "Usage: %s [OPTIONS] <NS ip>\n"
          "   -4 .......... Bind to IPv4 only instead of IP + IPv6.\n"
          "   -b .......... Background process and log to syslog.\n"
          "   -d .......... Set log level to LOG_DEBUG.\n"
          "   -p <port> ... Set incoming UDP port number.\n"
          "   -P <port> ... Set destination port number.\n",
-         argv0);
+         PACKAGE_VERSION, argv0);
 }
 
 
