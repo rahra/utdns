@@ -1,7 +1,6 @@
 AC_PREREQ(2.67)
-define([svnversion], esyscmd([sh -c "echo -n `svnversion | tr -d 'M'`"]))dnl
-AC_INIT([utdns], [[1.0.r]svnversion], [bf@abenteuerland.at])
-AC_CONFIG_MACRO_DIR([m4])
+define([revision], esyscmd([sh -c "echo -n `git log | wc -l`"]))dnl
+AC_INIT([utdns], [[1.1.r]revision], [bf@abenteuerland.at])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
 AC_SUBST([CFLAGS], [["$CFLAGS -Wall -Wextra"]])
 AC_PROG_CC

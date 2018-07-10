@@ -5,3 +5,11 @@ This is usefull if you have to tunnel DNS through TCP-only tunnels. This respect
 was the requirement for the development of this tool. 
 
 Have a look at [this article on cypherpunk.at](https://www.cypherpunk.at/2013/04/dnsudp-to-tcp-translator/) for some details.
+
+To build utdns either download the latest package from
+[releases](https://github.com/rahra/utdns/releases) and run `./configure`,
+`make`, and `make install` as usual or directly clone this directory from Github
+and run `./bootstrap` to initialize the autotools. Then run `./configure`,
+`make`, and `make install`. In the latter case you need to have installed the
+*GNU Autotools* packages `autoconf` and `automake`.
+
