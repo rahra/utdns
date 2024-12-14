@@ -6,10 +6,11 @@ Although there are some discussions found on the web on how to force DNS to use 
 
 There are also many people asking if BIND offers such a special mode and I found [this great posting](https://lists.isc.org/pipermail/bind-users/2008-August/072114.html):
 
-> >
+>
 > > Are there any configuration changes that can be made to BIND to force it to
 > > use TCP exclusively and never use UDP?
 > > Possible?
+>
 > no.
 > –
 > PaulVixie
@@ -35,8 +36,7 @@ The option -p lets you specify a different port number but then a redirection is
 
 ```
 iptables -t nat -A OUTPUT -p udp --dport 53 ! -o lo -j DNAT --to-destination 127.0.0.1:5300
-iptables -t nat -A POSTROUTING -p udp --dport 5300
- -j SNAT --to-source 127.0.0.1
+iptables -t nat -A POSTROUTING -p udp --dport 5300 -j SNAT --to-source 127.0.0.1
 # redirect incoming traffic from other host also
 iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 ```
