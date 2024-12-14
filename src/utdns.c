@@ -1,4 +1,4 @@
-/* Copyright 2013-2018 Bernhard R. Fischer, 4096R/8E24F29D <bf@abenteuerland.at>
+/* Copyright 2013-2024 Bernhard R. Fischer, 4096R/8E24F29D <bf@abenteuerland.at>
  *
  * This file is part of Utdns.
  *
@@ -15,7 +15,10 @@
  * along with Utdns. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/*! Utdns is a DNS protocol translator which turns UDP/DNS to TCP/DNS.
+/*! \file utdns.c
+ *  \author Bernhard R. Fischer, <bf@abenteuerland.at>
+ *
+ *  Utdns is a DNS protocol translator which turns UDP/DNS to TCP/DNS.
  *  It receives DNS packets on UDP port 53 and forwards them to a DNS server
  *  with TCP. The NS IP address has to be specified as command line argument.
  *  The responses are sent back again. Therefore, Utdns manages an internal

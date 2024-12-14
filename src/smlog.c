@@ -1,6 +1,6 @@
-/* Copyright 2008-2011 Bernhard R. Fischer, Daniel Haslinger.
+/* Copyright 2008-2024 Bernhard R. Fischer.
  *
- * This file is part of smrender.
+ * This file is part of Utdns. It was originally derived from Smrender.
  *
  * Smrender is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,10 @@
  * along with smrender. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/*! This file simply contains the logging functions. It was originally written
+/*! \file smlog.c
+ *  \author Bernhard R. Fischer, <bf@abenteuerland.at>
+ *
+ * This file simply contains the logging functions. It was originally written
  * for OnionCat and was adapted to be used for smrender.
  * 
  *  @author Bernhard R. Fischer
