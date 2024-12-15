@@ -1,6 +1,6 @@
 AC_PREREQ(2.67)
-define([revision], esyscmd([sh -c "echo -n `git log | wc -l`"]))dnl
-AC_INIT([utdns], [[1.2.r]revision], [bf@abenteuerland.at])
+
+AC_INIT([utdns], [1.3.0], [bf@abenteuerland.at])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
 AC_SUBST([CFLAGS], [["$CFLAGS -Wall -Wextra"]])
 AC_PROG_CC
